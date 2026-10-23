@@ -1,89 +1,103 @@
 import os
 import sys
+import pygame
 from obstacle import ObstacleManager
 from movement.will_move import PlayerRunner
 
-import pygame
-
 pygame.init()
-
-# --- Screen Settings ---
 WIDTH, HEIGHT = 800, 600
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption(
-    "Stranger Things - Upside Down Runner (Character & Background Only)"
-)
-
+pygame.display.set_caption("Stranger Things - Runner")
 clock = pygame.time.Clock()
 
-# --- Assets Setup ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSETS_DIR = os.path.join(BASE_DIR, "assets")
 BG_PATH = os.path.join(ASSETS_DIR, "BG2.jpeg")
 
-# Load Background
 try:
     background = pygame.image.load(BG_PATH).convert()
-    # Scale background to be larger initially for zooming effect
     background = pygame.transform.smoothscale(background, (WIDTH * 2, HEIGHT * 2))
 except pygame.error:
-    print(f"Error: Could not load background image at {BG_PATH}")
+    print(f"Error: Could not load background at {BG_PATH}")
     sys.exit()
 
-# --- Zoom Variables ---
 zoom = 1.0
 ZOOM_SPEED = 0.0004535
 MAX_ZOOM = 1.735
 
-# --- Initialize Player from your movement folder ---
-# This handles controls, physics, and animations internally.
 player_runner = PlayerRunner(WIDTH, HEIGHT)
+obstacle_manager = ObstacleManager(WIDTH, HEIGHT)
 
-# --- Main Game Loop ---
+LANE_RATIOS = [
+    {"top_x": 0.435, "bottom_x": 0.22, "top_y": 0.38},
+    {"top_x": 0.498, "bottom_x": 0.475, "top_y": 0.38},
+    {"top_x": 0.565, "bottom_x": 0.74, "top_y": 0.38},
+]
+
 running = True
-while running:
-    # dt: Time in milliseconds since last frame
-    dt = clock.tick(60)
+game_over = False
+font = pygame.font.SysFont(None, 50)
 
-    # Collect Frame Events
+while running:
+    dt = clock.tick(60)
     events = pygame.event.get()
     for event in events:
         if event.type == pygame.QUIT:
             running = False
+        if game_over and event.type == pygame.KEYDOWN:
+            if event.key == pygame.K_r:
+                game_over = False
+                obstacle_manager.obstacles.clear()
+                zoom = 1.0
 
-    # --- 1. Update Background Zoom Logic ---
-    zoom += ZOOM_SPEED * dt
+    if not game_over:
+        zoom += ZOOM_SPEED * dt
+        if zoom >= MAX_ZOOM:
+            zoom = 1.0
 
-    # Reset zoom when it reaches the maximum limit
-    if zoom >= MAX_ZOOM:
-        zoom = 1.0
+        scaled_width = int(WIDTH * zoom)
+        scaled_height = int(HEIGHT * zoom)
+        zoomed_bg = pygame.transform.smoothscale(background, (scaled_width, scaled_height))
+        x = (WIDTH - scaled_width) // 2
+        y = int((HEIGHT - scaled_height) // 2 + (zoom - 1.0) * 300)
 
-    scaled_width = int(WIDTH * zoom)
-    scaled_height = int(HEIGHT * zoom)
+        screen_lanes = []
+        horizon_y_screen = 0
+        for ratio in LANE_RATIOS:
+            top_x_screen = x + int(ratio["top_x"] * scaled_width)
+            bottom_x_screen = x + int(ratio["bottom_x"] * scaled_width)
+            top_y_screen = y + int(ratio["top_y"] * scaled_height)
+            screen_lanes.append({"top_x": top_x_screen, "bottom_x": bottom_x_screen})
+            horizon_y_screen = top_y_screen
 
-    # Scale background relative to current zoom level
-    zoomed_bg = pygame.transform.smoothscale(
-        background, (scaled_width, scaled_height)
-    )
+        obstacle_manager.lane_positions = screen_lanes
+        obstacle_manager.HORIZON_Y = horizon_y_screen
+        obstacle_manager.update_and_spawn(dt)
+        player_runner.update(events)
 
-    # Calculate positioning to keep zoom centered
-    x = (WIDTH - scaled_width) // 2
-    # Vertically offset slightly based on zoom level
-    y = int((HEIGHT - scaled_height) // 2 + (zoom - 1.0) * 300)
+        # --- PLAYER RECT GET KAREIN ---
+        if hasattr(player_runner, 'get_rect'):
+            player_rect = player_runner.get_rect()
+        elif hasattr(player_runner, 'rect'):
+            player_rect = player_runner.rect
+        else:
+            px = getattr(player_runner, 'char_x', getattr(player_runner, 'x', WIDTH // 2))
+            py = getattr(player_runner, 'y', getattr(player_runner, 'player_y', HEIGHT - 150))
+            player_rect = pygame.Rect(px + 30, py + 10, 70, 120)
 
-    # --- 2. Update Player Controls & Physics ---
-    # We pass events to the player object to handle key presses
-    player_runner.update(events)
+        # --- RECT COLLISION CHECK ---
+        if obstacle_manager.check_collision(player_rect):
+            game_over = True
 
-    # --- 3. Render Everything ---
-    # Blit Background first
-    screen.blit(zoomed_bg, (x, y))
+        screen.blit(zoomed_bg, (x, y))
+        obstacle_manager.draw(screen)
+        player_runner.draw(screen)
 
-    # Draw Character on top (the draw method handles transparent overlay)
-    player_runner.draw(screen)
+    else:
+        text = font.render("HIT! GAME OVER - Press R to Restart", True, (255, 200, 0))
+        screen.blit(text, (WIDTH//2 - text.get_width()//2, HEIGHT//2 - 20))
 
     pygame.display.flip()
 
-# --- Cleanup ---
 pygame.quit()
 sys.exit()
